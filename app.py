@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 # 标题
-st.title("📄 中软国际GBU PDF翻译工具")
+st.title("📄 中软国际GBU 文档翻译工具")
 st.markdown("---")
 
 # 检查API密钥
@@ -25,11 +25,11 @@ if not api_key:
     st.stop()
 
 # 文件上传
-st.subheader("📤 上传PDF文件")
+st.subheader("📤 上传文档")
 uploaded_file = st.file_uploader(
-    "选择PDF文件",
-    type=['pdf'],
-    help="支持PDF格式文件"
+    "选择文档文件",
+    type=['pdf', 'docx'],
+    help="支持PDF和Word文档格式"
 )
 
 # 语言选择
@@ -41,39 +41,59 @@ target_language = st.selectbox(
 )
 
 # 添加对照翻译选项
-show_comparison = st.checkbox("📋 显示原文和译文对照", value=False, help="选中后，输出的PDF将同时显示原文和译文，方便对比检查翻译质量")
+show_comparison = st.checkbox("📋 显示原文和译文对照", value=False, help="选中后，输出的文档将同时显示原文和译文，方便对比检查翻译质量")
 
 if uploaded_file is not None:
     # 显示文件信息
     st.success(f"✅ 已上传文件: {uploaded_file.name}")
     st.info(f"📊 文件大小: {uploaded_file.size / 1024:.1f} KB")
     
+    # 确定文件类型
+    file_extension = uploaded_file.name.split('.')[-1].lower()
+    if file_extension == 'pdf':
+        file_type = 'pdf'
+        output_suffix = '.pdf'
+        mime_type = "application/pdf"
+    elif file_extension == 'docx':
+        file_type = 'docx'
+        output_suffix = '.docx'
+        mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    else:
+        st.error("❌ 不支持的文件格式")
+        st.stop()
+    
     # 翻译按钮
     if st.button("🚀 开始翻译", type="primary"):
         try:
-            # 创建临时文件保存上传的PDF
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+            # 创建临时文件保存上传的文档
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_extension}') as temp_file:
                 temp_file.write(uploaded_file.getvalue())
                 temp_path = temp_file.name
 
             # 创建临时文件用于保存翻译结果
-            output_path = tempfile.mktemp(suffix='.pdf')
+            output_path = tempfile.mktemp(suffix=output_suffix)
 
-            # 创建翻译器实例并执行翻译，传入show_comparison参数
+            # 创建翻译器实例并执行翻译
             translator = PDFTranslator()
-            translator.translate_pdf(temp_path, output_path, target_language, show_comparison=show_comparison)
+            translator.translate_document(
+                temp_path, 
+                output_path, 
+                target_language, 
+                show_comparison=show_comparison,
+                file_type=file_type
+            )
             
-            # 读取翻译后的PDF文件
+            # 读取翻译后的文件
             with open(output_path, 'rb') as file:
-                translated_pdf = file.read()
+                translated_doc = file.read()
 
             # 提供下载按钮
             st.success("✅ 翻译完成！")
             st.download_button(
                 label="📥 下载翻译结果",
-                data=translated_pdf,
+                data=translated_doc,
                 file_name=f"translated_{uploaded_file.name}",
-                mime="application/pdf"
+                mime=mime_type
             )
 
             # 清理临时文件
@@ -88,7 +108,7 @@ with st.sidebar:
     st.header("ℹ️ 使用说明")
     st.markdown("""
     1. 确保已配置API密钥
-    2. 上传PDF文件
+    2. 上传PDF或Word文档
     3. 选择目标语言
     4. 点击开始翻译
     5. 下载翻译结果
@@ -101,5 +121,5 @@ with st.sidebar:
         st.error("❌ API密钥未配置")
     
     st.markdown("---")
-    st.markdown("**支持的文件格式:** PDF")
+    st.markdown("**支持的文件格式:** PDF, Word文档(.docx)")
     st.markdown("**支持的语言:** 中文、英文、日文、韩文、印尼语、泰语、阿拉伯语、马来语")
