@@ -17,6 +17,7 @@ import docx
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 import urllib.request
 import zipfile
 import shutil
@@ -90,7 +91,7 @@ class PDFTranslator:
 1. 只输出翻译后的内容，不要添加任何解释、注释或说明
 2. 保持原文的格式和段落结构
 3. 翻译成{target_lang}
-4. 不要输出"翻译如下"、"以下是翻译"等提示性文字
+4. 不要输出"翻译如下"、"以下是翻译"、“原文”、“译文”等提示性文字
 5. 不要添加任何括号内的解释或补充说明
 6. 直接输出翻译结果，不要有任何前缀或后缀"""
         try:
@@ -302,360 +303,195 @@ class PDFTranslator:
             raise Exception(f'Word文档读取失败：{str(e)}')
 
     def create_interleaved_docx(self, input_file: str, translated_texts: List[Tuple[int, dict]], output_path: str):
-        """创建交错的Word文档，原文和译文交替显示"""
+        """创建交错的Word文档：按段落原文-译文交替显示，不包含任何提示性标题"""
         try:
-            # 创建新文档
             doc = Document()
-            
-            # 设置文档样式和字体
+
+            # 默认样式设置为宋体，并设置 East Asia 字体映射，避免中文乱码
             style = doc.styles['Normal']
-            style.font.name = 'SimSun'  # 使用宋体作为默认字体
+            style.font.name = 'SimSun'
             style.font.size = Pt(12)
-            
-            # 添加标题
-            heading = doc.add_heading('文档翻译结果（原文与译文对照）', level=1)
-            # 设置标题字体
-            for run in heading.runs:
-                run.font.name = 'SimHei'  # 使用黑体作为标题字体
-            
-            # 读取原始文档
+            # 设置样式的 East Asia 字体（兼容中文）
+            if hasattr(style, 'element') and style.element is not None:
+                rFonts = style.element.rPr.rFonts
+                rFonts.set(qn('w:eastAsia'), 'SimSun')
+
+            # 读取原始文档内容
             original_doc = Document(input_file)
-            
-            # 提取原始文档的段落和表格
-            original_paragraphs = []
-            for para in original_doc.paragraphs:
-                if para.text.strip():
-                    original_paragraphs.append(para.text.strip())
-            
+
+            original_paragraphs = [p.text.strip() for p in original_doc.paragraphs if p.text.strip()]
             original_tables = []
             for table in original_doc.tables:
-                table_data = []
+                t = []
                 for row in table.rows:
-                    row_data = [cell.text for cell in row.cells]
-                    table_data.append(row_data)
-                if table_data:
-                    original_tables.append(table_data)
-            
-            # 处理段落（原文和译文交替显示）
-            doc.add_heading('段落内容', level=2)
-            for run in doc.paragraphs[-1].runs:
-                run.font.name = 'SimHei'
-            
-            for i, para_text in enumerate(original_paragraphs):
-                # 添加原文标题
-                p = doc.add_paragraph()
-                p.add_run('原文：').bold = True
-                p.runs[0].font.name = 'SimHei'
-                
-                # 添加原文内容
-                p = doc.add_paragraph(para_text)
-                p.paragraph_format.first_line_indent = Pt(24)  # 首行缩进
-                for run in p.runs:
-                    run.font.name = 'SimSun'
-                
-                # 添加译文标题
-                p = doc.add_paragraph()
-                p.add_run('译文：').bold = True
-                p.runs[0].font.name = 'SimHei'
-                
-                # 添加译文内容
-                # 从translated_texts中找到对应的译文
-                if i < len(translated_texts[0][1]["paragraphs"]):
-                    trans_text = translated_texts[0][1]["paragraphs"][i]["text"]
-                    p = doc.add_paragraph(trans_text)
-                    p.paragraph_format.first_line_indent = Pt(24)  # 首行缩进
+                    t.append([cell.text for cell in row.cells])
+                if t:
+                    original_tables.append(t)
+
+            # 译文数据（docx视为单页）
+            translated_page = translated_texts[0][1] if translated_texts else {"paragraphs": [], "tables": []}
+            translated_paragraphs = [p.get("text", "").strip() for p in translated_page.get("paragraphs", [])]
+            translated_tables = translated_page.get("tables", [])
+
+            # 段落：原文与译文交替，无标题、无分隔线
+            n = max(len(original_paragraphs), len(translated_paragraphs))
+            for i in range(n):
+                if i < len(original_paragraphs):
+                    p = doc.add_paragraph(original_paragraphs[i])
+                    p.paragraph_format.first_line_indent = Pt(24)
                     for run in p.runs:
                         run.font.name = 'SimSun'
-                
-                # 添加分隔线
-                doc.add_paragraph('-----------------------------------')
-            
-            # 处理表格（原文和译文交替显示）
-            if original_tables:
-                doc.add_heading('表格内容', level=2)
-                for run in doc.paragraphs[-1].runs:
-                    run.font.name = 'SimHei'
-                
-                for i, table_data in enumerate(original_tables):
-                    # 添加原文表格标题
-                    p = doc.add_paragraph()
-                    p.add_run(f'原文表格 {i+1}：').bold = True
-                    p.runs[0].font.name = 'SimHei'
-                    
-                    # 添加原文表格
-                    if table_data:
-                        table = doc.add_table(rows=len(table_data), cols=len(table_data[0]))
-                        table.style = 'Table Grid'
-                        
-                        # 填充表格数据
-                        for row_idx, row in enumerate(table_data):
-                            for col_idx, cell in enumerate(row):
-                                table.cell(row_idx, col_idx).text = cell or ""
-                                # 设置单元格字体
-                                for paragraph in table.cell(row_idx, col_idx).paragraphs:
-                                    for run in paragraph.runs:
-                                        run.font.name = 'SimSun'
-                    
-                    # 添加译文表格标题
-                    p = doc.add_paragraph()
-                    p.add_run(f'译文表格 {i+1}：').bold = True
-                    p.runs[0].font.name = 'SimHei'
-                    
-                    # 添加译文表格
-                    if i < len(translated_texts[0][1]["tables"]):
-                        trans_table = translated_texts[0][1]["tables"][i]
-                        if trans_table:
-                            table = doc.add_table(rows=len(trans_table), cols=len(trans_table[0]))
-                            table.style = 'Table Grid'
-                            
-                            # 填充表格数据
-                            for row_idx, row in enumerate(trans_table):
-                                for col_idx, cell in enumerate(row):
-                                    table.cell(row_idx, col_idx).text = cell or ""
-                                    # 设置单元格字体
-                                    for paragraph in table.cell(row_idx, col_idx).paragraphs:
-                                        for run in paragraph.runs:
-                                            run.font.name = 'SimSun'
-                    
-                    # 添加分隔线
-                    doc.add_paragraph('-----------------------------------')
-            
-            # 保存文档
+                        # 设置 East Asia 字体以防乱码
+                        if run._element.rPr is not None and run._element.rPr.rFonts is not None:
+                            run._element.rPr.rFonts.set(qn('w:eastAsia'), 'SimSun')
+
+                if i < len(translated_paragraphs):
+                    p = doc.add_paragraph(translated_paragraphs[i])
+                    p.paragraph_format.first_line_indent = Pt(24)
+                    for run in p.runs:
+                        run.font.name = 'SimSun'
+                        if run._element.rPr is not None and run._element.rPr.rFonts is not None:
+                            run._element.rPr.rFonts.set(qn('w:eastAsia'), 'SimSun')
+
+            # 表格：原表格后紧接译文表格，不加任何标题
+            m = max(len(original_tables), len(translated_tables))
+            for i in range(m):
+                if i < len(original_tables):
+                    table_data = original_tables[i]
+                    table = doc.add_table(rows=len(table_data), cols=len(table_data[0]))
+                    table.style = 'Table Grid'
+                    for r_idx, row in enumerate(table_data):
+                        for c_idx, cell in enumerate(row):
+                            table.cell(r_idx, c_idx).text = cell or ""
+                            for paragraph in table.cell(r_idx, c_idx).paragraphs:
+                                for run in paragraph.runs:
+                                    run.font.name = 'SimSun'
+                                    if run._element.rPr is not None and run._element.rPr.rFonts is not None:
+                                        run._element.rPr.rFonts.set(qn('w:eastAsia'), 'SimSun')
+
+                if i < len(translated_tables):
+                    trans_data = translated_tables[i]
+                    table = doc.add_table(rows=len(trans_data), cols=len(trans_data[0]))
+                    table.style = 'Table Grid'
+                    for r_idx, row in enumerate(trans_data):
+                        for c_idx, cell in enumerate(row):
+                            table.cell(r_idx, c_idx).text = cell or ""
+                            for paragraph in table.cell(r_idx, c_idx).paragraphs:
+                                for run in paragraph.runs:
+                                    run.font.name = 'SimSun'
+                                    if run._element.rPr is not None and run._element.rPr.rFonts is not None:
+                                        run._element.rPr.rFonts.set(qn('w:eastAsia'), 'SimSun')
+
             doc.save(output_path)
-            
+
         except Exception as e:
             raise Exception(f'Word文档创建失败：{str(e)}')
 
     def create_translated_docx(self, translated_texts: List[Tuple[int, dict]], output_path: str, show_comparison: bool = True):
-        """创建翻译后的Word文档"""
+        """创建仅译文的Word文档（无任何提示性标题），按段落排版"""
         try:
             doc = Document()
-            
-            # 设置文档样式
+
+            # 默认样式：宋体 + East Asia 映射（防乱码）
             style = doc.styles['Normal']
-            style.font.name = 'SimSun'  # 使用宋体
+            style.font.name = 'SimSun'
             style.font.size = Pt(12)
-            
-            # 添加标题
-            heading = doc.add_heading('文档翻译结果', level=1)
-            # 设置标题字体
-            for run in heading.runs:
-                run.font.name = 'SimHei'  # 使用黑体作为标题字体
-            
-            # 处理所有翻译内容
-            for page_num, page_content in translated_texts:
-                # 添加页面标题
-                subheading = doc.add_heading(f'第 {page_num} 页译文', level=2)
-                # 设置小标题字体
-                for run in subheading.runs:
-                    run.font.name = 'SimHei'
-                
-                # 添加段落
-                for para in page_content["paragraphs"]:
-                    if para["text"].strip():
-                        p = doc.add_paragraph(para["text"].strip())
-                        p.paragraph_format.first_line_indent = Pt(24)  # 首行缩进
-                        # 设置段落字体
+            if hasattr(style, 'element') and style.element is not None:
+                style.element.rPr.rFonts.set(qn('w:eastAsia'), 'SimSun')
+
+            # 遍历所有译文页（docx通常只有一页结构）
+            for _, page_content in translated_texts:
+                for para in page_content.get("paragraphs", []):
+                    text = (para.get("text") or "").strip()
+                    if text:
+                        p = doc.add_paragraph(text)
+                        p.paragraph_format.first_line_indent = Pt(24)
                         for run in p.runs:
                             run.font.name = 'SimSun'
-                
-                # 添加表格
-                if page_content.get("tables"):
-                    for table_data in page_content["tables"]:
-                        if table_data:
-                            # 创建表格
-                            table = doc.add_table(rows=len(table_data), cols=len(table_data[0]))
-                            table.style = 'Table Grid'
-                            
-                            # 填充表格数据
-                            for i, row in enumerate(table_data):
-                                for j, cell in enumerate(row):
-                                    table.cell(i, j).text = cell or ""
-                                    # 设置单元格字体
-                                    for paragraph in table.cell(i, j).paragraphs:
-                                        for run in paragraph.runs:
-                                            run.font.name = 'SimSun'
-                            
-                            # 表格后添加空行
-                            doc.add_paragraph()
-            
-            # 保存文档
+                            if run._element.rPr is not None and run._element.rPr.rFonts is not None:
+                                run._element.rPr.rFonts.set(qn('w:eastAsia'), 'SimSun')
+
+                for table_data in page_content.get("tables", []):
+                    if table_data:
+                        table = doc.add_table(rows=len(table_data), cols=len(table_data[0]))
+                        table.style = 'Table Grid'
+                        for r_idx, row in enumerate(table_data):
+                            for c_idx, cell in enumerate(row):
+                                table.cell(r_idx, c_idx).text = cell or ""
+                                for paragraph in table.cell(r_idx, c_idx).paragraphs:
+                                    for run in paragraph.runs:
+                                        run.font.name = 'SimSun'
+                                        if run._element.rPr is not None and run._element.rPr.rFonts is not None:
+                                            run._element.rPr.rFonts.set(qn('w:eastAsia'), 'SimSun')
+
             doc.save(output_path)
-            
+
         except Exception as e:
             raise Exception(f'Word文档创建失败：{str(e)}')
 
     def _create_translation_pages(self, translated_texts: List[Tuple[int, dict]], output_path: str):
-        """创建译文页面，确保每页译文单独成页，并有良好排版"""
+        """创建译文页面（无提示性标题），每页按段落排版"""
         try:
             from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, PageBreak, TableStyle
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
             from reportlab.lib.pagesizes import letter
             from reportlab.lib.units import inch
             from reportlab.lib import colors
-            
-            # 创建PDF文档
+
             doc = SimpleDocTemplate(
                 output_path,
                 pagesize=letter,
-                rightMargin=72,  # 1英寸页边距
+                rightMargin=72,
                 leftMargin=72,
                 topMargin=72,
                 bottomMargin=72
             )
-            
-            # 注册字体
+
             font_name = self._register_fonts()
-            
-            # 创建样式
             styles = getSampleStyleSheet()
-            
-            # 标题样式 - 更醒目
-            title_style = ParagraphStyle(
-                'TitleStyle',
-                parent=styles['Heading1'],
-                fontName=font_name,
-                fontSize=16,
-                leading=20,
-                spaceBefore=24,
-                spaceAfter=24,
-                alignment=1,  # 居中
-                textColor=colors.darkblue,
-                borderWidth=1,
-                borderColor=colors.lightgrey,
-                borderPadding=10,
-                backColor=colors.lightgrey,
-                borderRadius=5
-            )
-            
-            # 小标题样式 - 用于段落分组
-            subtitle_style = ParagraphStyle(
-                'SubtitleStyle',
-                parent=styles['Heading2'],
-                fontName=font_name,
-                fontSize=14,
-                leading=18,
-                spaceBefore=16,
-                spaceAfter=12,
-                alignment=0,  # 左对齐
-                textColor=colors.darkblue,
-                borderWidth=0,
-                borderColor=colors.lightgrey,
-                borderPadding=5,
-                leftIndent=10,
-                underline=1
-            )
-            
-            # 译文段落样式
+
             translated_style = ParagraphStyle(
                 'TranslatedText',
                 parent=styles['Normal'],
                 fontName=font_name,
                 fontSize=12,
-                leading=18,  # 行间距
-                spaceBefore=12,  # 段前空间
-                spaceAfter=12,  # 段后空间
-                firstLineIndent=24,  # 首行缩进
-                alignment=0,  # 左对齐
-                bulletIndent=10,  # 项目符号缩进
-                leftIndent=20  # 左侧缩进
+                leading=18,
+                spaceBefore=6,
+                spaceAfter=6,
+                alignment=0  # 左对齐
             )
-            
-            # 页码样式
-            page_number_style = ParagraphStyle(
-                'PageNumber',
-                parent=styles['Normal'],
-                fontName=font_name,
-                fontSize=10,
-                textColor=colors.darkgrey,
-                alignment=1  # 居中
-            )
-            
+
             story = []
-            
-            # 按页面顺序处理译文
+
             for i, (page_num, page_content) in enumerate(translated_texts):
-                # 如果不是第一页，添加分页符
                 if i > 0:
                     story.append(PageBreak())
-                
-                # 添加页码标记作为标题
-                story.append(Paragraph(f'第 {page_num} 页译文', title_style))
-                story.append(Spacer(1, 24))
-                
-                # 分组处理段落，每3-5个段落为一组，添加小标题
-                paragraphs = page_content["paragraphs"]
-                if paragraphs:
-                    # 根据段落数量决定分组数
-                    group_size = min(5, max(3, len(paragraphs) // 3))
-                    
-                    for group_idx in range(0, len(paragraphs), group_size):
-                        group_paragraphs = paragraphs[group_idx:group_idx + group_size]
-                        
-                        # 添加小标题（如果有多个分组）
-                        if len(paragraphs) > group_size:
-                            section_num = group_idx // group_size + 1
-                            story.append(Paragraph(f'段落组 {section_num}', subtitle_style))
-                        
-                        # 添加译文段落，增加段落间的视觉分隔
-                        for para in group_paragraphs:
-                            if para["text"].strip():
-                                # 处理段落文本，确保段落格式正确
-                                para_text = para["text"].strip()
-                                
-                                # 添加段落
-                                story.append(Paragraph(para_text, translated_style))
-                                story.append(Spacer(1, 8))  # 段落间小间距
-                        
-                        # 组间分隔
-                        if len(paragraphs) > group_size and group_idx + group_size < len(paragraphs):
-                            story.append(Spacer(1, 16))
-                            story.append(Paragraph('* * *', page_number_style))
-                            story.append(Spacer(1, 16))
-                
-                # 处理表格
-                if page_content.get("tables"):
-                    story.append(Spacer(1, 16))  # 表格前增加间距
-                    story.append(Paragraph('表格数据', subtitle_style))
-                    story.append(Spacer(1, 12))
-                    
-                    for table_idx, table_data in enumerate(page_content["tables"]):
-                        if table_data:
-                            # 如果有多个表格，添加表格编号
-                            if len(page_content["tables"]) > 1:
-                                story.append(Paragraph(f'表格 {table_idx + 1}', ParagraphStyle(
-                                    'TableTitle',
-                                    parent=translated_style,
-                                    fontSize=11,
-                                    textColor=colors.darkblue,
-                                    alignment=0
-                                )))
-                                story.append(Spacer(1, 8))
-                            
-                            # 创建表格
-                            table = Table(table_data, repeatRows=1)
-                            table.setStyle(TableStyle([
-                                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                                ('FONTNAME', (0, 0), (-1, -1), font_name),
-                                ('FONTSIZE', (0, 0), (-1, -1), 10),
-                                ('PADDING', (0, 0), (-1, -1), 8),
-                                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                                ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),  # 表头背景色
-                                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),  # 表头文字颜色
-                                ('FONTSIZE', (0, 0), (-1, 0), 11),  # 表头字体大小
-                                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),  # 表头底部填充
-                                ('TOPPADDING', (0, 0), (-1, 0), 10),  # 表头顶部填充
-                                # 交替行颜色
-                                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-                                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
-                            ]))
-                            story.append(table)
-                            story.append(Spacer(1, 16))
-            
-            # 生成PDF
+
+                # 仅添加译文段落（不再添加“第 X 页译文”等标题）
+                paragraphs = page_content.get("paragraphs", [])
+                for para in paragraphs:
+                    text = (para.get("text") or "").strip()
+                    if text:
+                        story.append(Paragraph(text, translated_style))
+                        story.append(Spacer(1, 8))
+
+                # 表格（不添加“表格数据”、“表格 X”等提示）
+                for table_data in page_content.get("tables", []):
+                    if table_data:
+                        table = Table(table_data, repeatRows=0)
+                        table.setStyle(TableStyle([
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                            ('FONTNAME', (0, 0), (-1, -1), font_name),
+                            ('FONTSIZE', (0, 0), (-1, -1), 10),
+                            ('PADDING', (0, 0), (-1, -1), 6),
+                            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                        ]))
+                        story.append(table)
+                        story.append(Spacer(1, 12))
+
             doc.build(story)
-        
+
         except Exception as e:
             raise Exception(f'译文页面创建失败：{str(e)}')
     
