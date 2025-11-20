@@ -8,3 +8,4 @@ pdfplumber==0.10.3
 reportlab==4.0.8
 docx2pdf==0.1.8
 pywin32==306; sys_platform == 'win32'
+pdf2zh==1.9.11
