@@ -2,15 +2,8 @@ import os
 from typing import List, Tuple
 from dotenv import load_dotenv
 import requests
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.lib.utils import ImageReader
 import pdfplumber
 from PyPDF2 import PdfMerger, PdfReader, PdfWriter
-from reportlab.platypus import Table, TableStyle
-from reportlab.lib import colors
 import streamlit as st
 import tempfile
 import docx
@@ -220,6 +213,8 @@ class PDFTranslator:
         for font_name, font_path in font_paths.items():
             try:
                 if os.path.exists(font_path):
+                    from reportlab.pdfbase import pdfmetrics
+                    from reportlab.pdfbase.ttfonts import TTFont
                     pdfmetrics.registerFont(TTFont(font_name, font_path))
                     return font_name
             except Exception as e:
@@ -247,6 +242,8 @@ class PDFTranslator:
                 st.success("思源黑体字体下载完成！")
             
             # 注册思源黑体
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
             pdfmetrics.registerFont(TTFont('SourceHanSans', source_han_path))
             return 'SourceHanSans'
         except Exception as e:
